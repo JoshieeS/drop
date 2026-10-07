@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg:     #0a0c0b;
+  --color-panel:  #0f1311;
+  --color-line:   #1c2420;
+  --color-fg:     #c8d3cc;
+  --color-dim:    #5c6b63;
+  --color-accent: #00e676;
+  --color-warn:   #ffb547;
+  --color-err:    #ff5f56;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+html { color-scheme: dark; }
+
+@keyframes blink { 50% { opacity: 0 } }
+.cursor::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--color-accent);
+  animation: blink 1s steps(1) infinite;
+}
+
+::selection { background: var(--color-accent); color: var(--color-bg); }
