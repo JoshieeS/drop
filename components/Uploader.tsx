@@ -12,6 +12,8 @@ import { makeSlug } from '@/lib/slug';
 import { traceConnection } from '@/lib/diagnostics';
 import { parseMsg, sendMsg } from '@/lib/protocol';
 import { sendFiles } from '@/lib/send';
+import { useWakeLock } from '@/lib/usewakeLock';
+import { useVisibilityLog } from '@/lib/useVisibilityLog';
 
 const keyOf = (f: File) => `${f.name}-${f.size}-${f.lastModified}`;
 
@@ -171,6 +173,9 @@ export function Uploader() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [phase]);
+
+  useWakeLock(phase === 'hosting', log);
+  useVisibilityLog(phase === 'hosting', log);
 
   // ---------- render ----------
   if (files.length === 0 && phase === 'idle') {

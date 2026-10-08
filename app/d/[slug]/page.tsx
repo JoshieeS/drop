@@ -10,6 +10,8 @@ import { ICE_SERVERS } from '@/lib/ice';
 import { traceConnection } from '@/lib/diagnostics';
 import { parseMsg, sendMsg, type FileMeta } from '@/lib/protocol';
 import { createSink, type Sink } from '@/lib/sink';
+import { useWakeLock } from '@/lib/usewakeLock';
+import { useVisibilityLog } from '@/lib/useVisibilityLog';
 
 type Phase = 'connecting' | 'connected' | 'receiving' | 'done' | 'unavailable' | 'closed' | 'error';
 type Got = { file: File; url: string };
@@ -171,6 +173,9 @@ export default function DownloadPage() {
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
   }, [slug, log, go]);
+
+  useWakeLock(phase === 'receiving', log);
+  useVisibilityLog(phase === 'receiving' || phase === 'connecting', log);
 
   // Warn before closing the tab mid-transfer.
   useEffect(() => {
