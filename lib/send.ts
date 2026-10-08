@@ -1,8 +1,8 @@
-import { CHUNK, sendMsg } from './protocol';
+import { sendMsg } from './protocol';
 
-const READ_BLOCK = 1024 * 1024;     // read 1 MB from disk at a time
-const HIGH_WATER = 4 * 1024 * 1024; // pause when 4 MB is queued
-const LOW_WATER = 1024 * 1024;      // resume when it drains below 1 MB
+const READ_BLOCK = 4 * 1024 * 1024; // read 4 MB from disk at a time
+const HIGH_WATER = 8 * 1024 * 1024; // pause when 8 MB is queued
+const LOW_WATER = 2 * 1024 * 1024;  // resume when it drains below 2 MB
 
 // Resolves when the queue drains; rejects if the channel closes while we wait.
 function drained(dc: RTCDataChannel) {
@@ -21,7 +21,8 @@ function drained(dc: RTCDataChannel) {
 export async function sendFiles(
   dc: RTCDataChannel,
   files: File[],
-  onProgress: (sentBytes: number) => void
+  onProgress: (sentBytes: number) => void,
+  chunk: number
 ) {
   dc.bufferedAmountLowThreshold = LOW_WATER;
   let sent = 0;
@@ -33,13 +34,13 @@ export async function sendFiles(
     for (let offset = 0; offset < file.size; offset += READ_BLOCK) {
       const block = await file.slice(offset, offset + READ_BLOCK).arrayBuffer();
 
-      for (let p = 0; p < block.byteLength; p += CHUNK) {
+      for (let p = 0; p < block.byteLength; p += chunk) {
         if (dc.readyState !== 'open') throw new Error('channel closed');
         if (dc.bufferedAmount > HIGH_WATER) await drained(dc);
 
-        const chunk = block.slice(p, p + CHUNK);
-        dc.send(chunk);
-        sent += chunk.byteLength;
+        const piece = block.slice(p, p + chunk);
+        dc.send(piece);
+        sent += piece.byteLength;
       }
       onProgress(sent);
     }

@@ -10,7 +10,7 @@ import { formatBytes, isMedia } from '@/lib/format';
 import { ICE_SERVERS } from '@/lib/ice';
 import { makeSlug } from '@/lib/slug';
 import { traceConnection } from '@/lib/diagnostics';
-import { parseMsg, sendMsg } from '@/lib/protocol';
+import { parseMsg, pickChunkSize, sendMsg } from '@/lib/protocol';
 import { sendFiles } from '@/lib/send';
 import { useWakeLock } from '@/lib/usewakeLock';
 import { useVisibilityLog } from '@/lib/useVisibilityLog';
@@ -34,7 +34,7 @@ export function Uploader() {
   const { lines, log } = useLog();
 
   const peerRef = useRef<Peer | null>(null);
-  const filesRef = useRef<File[]>([]);
+  const filesRef = useRef<File[]>([]); // PeerJS callbacks read this, never stale state
 
   const update = (id: string, patch: Partial<PeerInfo>) =>
     setPeers((prev) => {
@@ -59,7 +59,7 @@ export function Uploader() {
     setPhase('starting');
     log('requesting peer id…');
 
-    const mod = await import('peerjs');
+    const mod = await import('peerjs'); // dynamic: peerjs touches `window` on import
 
     const open = (attempt = 0) => {
       const peer = new mod.Peer(makeSlug(), { config: { iceServers: ICE_SERVERS } });
@@ -75,7 +75,7 @@ export function Uploader() {
 
       peer.on('disconnected', () => {
         if (peer.destroyed) return;
-        log('signaling server lost, reconnecting…', 'warn');
+        log('signaling server lost, reconnecting…', 'warn'); // open channels stay up
         peer.reconnect();
       });
 
@@ -121,18 +121,26 @@ export function Uploader() {
       const list = filesRef.current;
       const total = list.reduce((s, f) => s + f.size, 0);
       update(id, { state: 'sending', sent: 0, total });
+
+      const chunk = pickChunkSize(conn.peerConnection);
+      log(`chunk size: ${chunk / 1024} KB`);
       log(`sending ${formatBytes(total)} to ${who}…`);
 
       const t0 = performance.now();
       let lastUi = 0;
       try {
-        await sendFiles(conn.dataChannel, list, (sent) => {
-          const now = performance.now();
-          if (now - lastUi > 150) {   // re-render at most ~7×/s
-            lastUi = now;
-            update(id, { sent });
-          }
-        });
+        await sendFiles(
+          conn.dataChannel,
+          list,
+          (sent) => {
+            const now = performance.now();
+            if (now - lastUi > 150) { // re-render at most ~7×/s
+              lastUi = now;
+              update(id, { sent });
+            }
+          },
+          chunk
+        );
         const secs = Math.max((performance.now() - t0) / 1000, 0.001);
         update(id, { state: 'done', sent: total });
         log(`sent to ${who} in ${secs.toFixed(1)}s · avg ${formatBytes(total / secs)}/s`, 'ok');
@@ -145,7 +153,7 @@ export function Uploader() {
     conn.on('close', () => {
       setPeers((prev) => {
         const p = prev[id];
-        if (!p || p.state === 'done') return prev;   // keep finished peers marked done
+        if (!p || p.state === 'done') return prev; // keep finished peers marked done
         const next = { ...prev };
         next[id] = { ...p, state: 'closed' };
         return next;
@@ -157,7 +165,7 @@ export function Uploader() {
   }
 
   function stop() {
-    peerRef.current?.destroy();
+    peerRef.current?.destroy(); // closes every connection and frees the link
     peerRef.current = null;
     setPhase('idle');
     setLink('');
@@ -165,6 +173,7 @@ export function Uploader() {
     log('sharing stopped', 'warn');
   }
 
+  // ---------- effects (all hooks must run before any early return) ----------
   useEffect(() => () => peerRef.current?.destroy(), []);
 
   useEffect(() => {
@@ -250,7 +259,11 @@ export function Uploader() {
                 <div key={e[0]} className="space-y-1">
                   <div className="flex justify-between text-xs">
                     <span className="text-dim">peer {e[0].slice(-6)}</span>
-                    <span className={e[1].state === 'done' ? 'text-accent' : e[1].state === 'closed' ? 'text-err' : ''}>
+                    <span
+                      className={
+                        e[1].state === 'done' ? 'text-accent' : e[1].state === 'closed' ? 'text-err' : ''
+                      }
+                    >
                       {e[1].state}
                     </span>
                   </div>

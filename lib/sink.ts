@@ -36,6 +36,24 @@ async function diskSink(onError: (msg: string) => void): Promise<Sink | null> {
   }
 
   let path = '';
+  let pending: ArrayBuffer[] = [];
+  let pendingBytes = 0;
+  const FLUSH_AT = 1024 * 1024; // hand the worker 1 MB at a time
+
+  // Merge buffered chunks into one buffer and transfer it to the worker (no copy).
+  const flush = () => {
+    if (!pendingBytes) return;
+    const merged = new Uint8Array(pendingBytes);
+    let o = 0;
+    for (const b of pending) {
+      merged.set(new Uint8Array(b), o);
+      o += b.byteLength;
+    }
+    worker.postMessage({ op: 'write', buf: merged.buffer }, [merged.buffer]);
+    pending = [];
+    pendingBytes = 0;
+  };
+
   return {
     kind: 'disk',
     open(p) {
@@ -43,10 +61,13 @@ async function diskSink(onError: (msg: string) => void): Promise<Sink | null> {
       worker.postMessage({ op: 'open', path: p });
     },
     write(buf) {
-      worker.postMessage({ op: 'write', buf }, [buf]); // transfer ownership, no copy
+      pending.push(buf);
+      pendingBytes += buf.byteLength;
+      if (pendingBytes >= FLUSH_AT) flush();
     },
     async close(name, type) {
-      const myPath = path; // capture now: the next file may call open() before we finish
+      flush();           // synchronous: this file's last bytes are queued before 'close'
+      const myPath = path; // capture now: the next file may call open() while we await
       const reply = await ask({ op: 'close' });
       if (!reply.ok) throw new Error(reply.message);
       const root = await navigator.storage.getDirectory();
@@ -55,6 +76,8 @@ async function diskSink(onError: (msg: string) => void): Promise<Sink | null> {
       return new File([onDisk], name, { type, lastModified: Date.now() });
     },
     dispose() {
+      pending = [];
+      pendingBytes = 0;
       worker.terminate();
     },
   };
@@ -64,13 +87,19 @@ function memorySink(): Sink {
   let parts: ArrayBuffer[] = [];
   return {
     kind: 'memory',
-    open() { parts = []; },
-    write(buf) { parts.push(buf); },
+    open() {
+      parts = [];
+    },
+    write(buf) {
+      parts.push(buf);
+    },
     async close(name, type) {
       const mine = parts;
       parts = [];
       return new File(mine, name, { type });
     },
-    dispose() { parts = []; },
+    dispose() {
+      parts = [];
+    },
   };
-}                          
+}
