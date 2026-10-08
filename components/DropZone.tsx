@@ -11,7 +11,7 @@ export function Dropzone({ onFiles, compact = false }: Props) {
       onDragOver={(e) => { e.preventDefault(); setOver(true); }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
-        e.preventDefault();               // stop the browser opening the file
+        e.preventDefault();
         setOver(false);
         onFiles(Array.from(e.dataTransfer.files));
       }}
@@ -20,7 +20,7 @@ export function Dropzone({ onFiles, compact = false }: Props) {
         ${over ? 'border-accent bg-accent/5' : 'border-line hover:border-dim'}`}
     >
       <span className={compact ? 'text-dim' : 'cursor'}>
-        {compact ? '+ add more' : 'drop photos or tap to select'}
+        {compact ? '+ add more' : 'drop photos or videos, or tap to select'}
       </span>
       {!compact && (
         <div className="mt-2 text-xs text-dim">files stay on this device until a peer connects</div>
@@ -28,11 +28,11 @@ export function Dropzone({ onFiles, compact = false }: Props) {
       <input
         type="file"
         multiple
-        accept="image/*"
+        accept="image/*,video/*"
         hidden
         onChange={(e) => {
           onFiles(Array.from(e.target.files ?? []));
-          e.target.value = '';            // allow re-selecting the same file
+          e.target.value = '';   // lets you re-select the same file
         }}
       />
     </label>

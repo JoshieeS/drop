@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Dropzone } from './DropZone';
 import { FileList } from './FileList';
+import { isMedia } from '@/lib/format';
 
 const keyOf = (f: File) => `${f.name}-${f.size}-${f.lastModified}`;
 
@@ -9,10 +10,10 @@ export function Uploader() {
   const [files, setFiles] = useState<File[]>([]);
 
   function add(incoming: File[]) {
-    const images = incoming.filter((f) => f.type.startsWith('image/'));
+    const media = incoming.filter(isMedia);   // drag-and-drop ignores `accept`
     setFiles((prev) => {
       const seen = new Set(prev.map(keyOf));
-      return [...prev, ...images.filter((f) => !seen.has(keyOf(f)))]; // skip duplicates
+      return [...prev, ...media.filter((f) => !seen.has(keyOf(f)))];
     });
   }
 
@@ -27,7 +28,7 @@ export function Uploader() {
 
       <div className="flex gap-3">
         <button
-          disabled                           // enabled in Step 4
+          disabled   // enabled in Step 4
           className="flex-1 border border-accent px-4 py-2 text-accent transition-colors
                      hover:bg-accent hover:text-bg disabled:cursor-not-allowed disabled:opacity-40
                      disabled:hover:bg-transparent disabled:hover:text-accent"
