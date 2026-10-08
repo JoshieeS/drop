@@ -129,12 +129,12 @@ export function Uploader() {
       const t0 = performance.now();
       let lastUi = 0;
       try {
-        await sendFiles(
+        const stats = await sendFiles(
           conn.dataChannel,
           list,
           (sent) => {
             const now = performance.now();
-            if (now - lastUi > 150) { // re-render at most ~7×/s
+            if (now - lastUi > 150) {
               lastUi = now;
               update(id, { sent });
             }
@@ -142,8 +142,15 @@ export function Uploader() {
           chunk
         );
         const secs = Math.max((performance.now() - t0) / 1000, 0.001);
+        const netBound = stats.waitMs / stats.totalMs;
         update(id, { state: 'done', sent: total });
         log(`sent to ${who} in ${secs.toFixed(1)}s · avg ${formatBytes(total / secs)}/s`, 'ok');
+        log(
+          netBound > 0.5
+            ? `pipe saturated ${(netBound * 100).toFixed(0)}% of the time · limit is network/receiver`
+            : `pipe saturated ${(netBound * 100).toFixed(0)}% of the time · limit is sender (disk/cpu)`,
+          netBound > 0.5 ? 'ok' : 'warn'
+        );
       } catch (err) {
         update(id, { state: 'closed' });
         log(`transfer to ${who} aborted: ${(err as Error).message}`, 'err');
