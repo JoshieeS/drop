@@ -1,10 +1,11 @@
 import { sendMsg } from './protocol';
 
-const READ_BLOCK = 4 * 1024 * 1024;  // read 4 MB from disk at a time
-const HIGH_WATER = 16 * 1024 * 1024; // pause when 16 MB is queued
-const LOW_WATER = 4 * 1024 * 1024;   // resume when it drains below 4 MB
+const READ_BLOCK = 4 * 1024 * 1024; // read 4 MB from disk at a time
+const HIGH_WATER = 8 * 1024 * 1024; // stay well under Chrome's ~16 MB queue limit
+const LOW_WATER = 2 * 1024 * 1024;  // resume when it drains below 2 MB
+const SAFE_CHUNK = 16 * 1024;       // fallback that every browser accepts
 
-export type SendStats = { waitMs: number; totalMs: number };
+export type SendStats = { waitMs: number; totalMs: number; chunk: number };
 
 // Resolves when the queue drains; rejects if the channel closes while we wait.
 function drained(dc: RTCDataChannel) {
@@ -30,12 +31,47 @@ export async function sendFiles(
   dc: RTCDataChannel,
   files: File[],
   onProgress: (sentBytes: number) => void,
-  chunk: number
+  initialChunk: number,
+  log?: (msg: string, level?: 'info' | 'ok' | 'warn' | 'err') => void
 ): Promise<SendStats> {
   dc.bufferedAmountLowThreshold = LOW_WATER;
   const t0 = performance.now();
-  let waitMs = 0; // time spent paused because the network couldn't keep up
+  let chunk = initialChunk;
+  let waitMs = 0;
   let sent = 0;
+
+  const waitForRoom = async () => {
+    const w = performance.now();
+    await drained(dc);
+    waitMs += performance.now() - w;
+  };
+
+  // Send one piece, recovering from "queue full" and "message too large".
+  const sendPiece = async (piece: ArrayBuffer): Promise<boolean> => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (dc.readyState !== 'open') throw new Error('channel closed');
+      if (dc.bufferedAmount + piece.byteLength > HIGH_WATER) await waitForRoom();
+      try {
+        dc.send(piece);
+        return true;
+      } catch (err) {
+        const e = err as DOMException;
+        if (e.name === 'TypeError' && chunk > SAFE_CHUNK) {
+          // Message too large for the other browser: shrink and resend this block.
+          chunk = SAFE_CHUNK;
+          log?.(`chunk rejected as too large · falling back to ${SAFE_CHUNK / 1024} KB`, 'warn');
+          return false;
+        }
+        if (e.name === 'OperationError') {
+          // Queue full: wait for it to drain, then retry the same piece.
+          await waitForRoom();
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error('send queue stayed full');
+  };
 
   for (let index = 0; index < files.length; index++) {
     const file = files[index];
@@ -45,23 +81,17 @@ export async function sendFiles(
 
     for (let offset = 0; offset < file.size; offset += READ_BLOCK) {
       const block = await next;
-
-      // Start reading the following block now, while this one is being sent.
       const nextOffset = offset + READ_BLOCK;
-      if (nextOffset < file.size) next = read(file, nextOffset);
+      if (nextOffset < file.size) next = read(file, nextOffset); // read ahead while sending
 
-      for (let p = 0; p < block.byteLength; p += chunk) {
-        if (dc.readyState !== 'open') throw new Error('channel closed');
-        if (dc.bufferedAmount > HIGH_WATER) {
-          const w = performance.now();
-          await drained(dc);
-          waitMs += performance.now() - w;
-        }
+      let p = 0;
+      while (p < block.byteLength) {
         const piece = block.slice(p, p + chunk);
-        dc.send(piece);
+        if (!(await sendPiece(piece))) continue; // chunk shrank: re-slice from same position
+        p += piece.byteLength;
         sent += piece.byteLength;
+        onProgress(sent);
       }
-      onProgress(sent);
     }
 
     sendMsg(dc, { kind: 'file-end', index });
@@ -69,12 +99,11 @@ export async function sendFiles(
 
   sendMsg(dc, { kind: 'complete' });
 
-  // Wait until everything has actually left, so the timing is real.
   while (dc.bufferedAmount > 0 && dc.readyState === 'open') {
     const w = performance.now();
     await new Promise((r) => setTimeout(r, 50));
     waitMs += performance.now() - w;
   }
 
-  return { waitMs, totalMs: performance.now() - t0 };
+  return { waitMs, totalMs: performance.now() - t0, chunk };
 }
