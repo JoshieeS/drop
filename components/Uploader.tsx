@@ -139,7 +139,8 @@ export function Uploader() {
               update(id, { sent });
             }
           },
-          chunk
+          chunk,
+          log
         );
         const secs = Math.max((performance.now() - t0) / 1000, 0.001);
         const netBound = stats.waitMs / stats.totalMs;
